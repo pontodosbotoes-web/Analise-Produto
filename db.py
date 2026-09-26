@@ -10,7 +10,7 @@ def get_engine():
 @st.cache_data(ttl=3600)
 def carregar_fabricantes():
     engine = get_engine()
-    query = "SELECT DISTINCT NOMEFABR FROM Fabricantes WHERE NOMEFABR IS NOT NULL ORDER BY NOMEFABR"
+    query = "SELECT DISTINCT NOMEFABR FROM Fabricantes WITH (NOLOCK) WHERE NOMEFABR IS NOT NULL ORDER BY NOMEFABR"
     with engine.connect() as conn:
         df = pd.read_sql_query(text(query), conn)
     return df['NOMEFABR'].tolist()
@@ -20,7 +20,7 @@ def carregar_departamentos():
     engine = get_engine()
     query = """
         SELECT DISTINCT LEFT(CodGrupo, 2) AS Codigo, NomeGrupo 
-        FROM Grupos 
+        FROM Grupos WITH (NOLOCK)
         WHERE LEN(REPLACE(CodGrupo, '.', '')) = 2 OR LEN(CodGrupo) = 2
         ORDER BY NomeGrupo
     """
@@ -33,7 +33,7 @@ def carregar_grupos(cod_depto=None):
     engine = get_engine()
     query = """
         SELECT DISTINCT CodGrupo AS Codigo, NomeGrupo 
-        FROM Grupos 
+        FROM Grupos WITH (NOLOCK)
         WHERE (LEN(REPLACE(CodGrupo, '.', '')) = 4 OR LEN(CodGrupo) = 5)
     """
     if cod_depto:
@@ -50,7 +50,7 @@ def carregar_subgrupos(cod_grupo=None):
     engine = get_engine()
     query = """
         SELECT DISTINCT CodGrupo AS Codigo, NomeGrupo 
-        FROM Grupos 
+        FROM Grupos WITH (NOLOCK)
         WHERE (LEN(REPLACE(CodGrupo, '.', '')) > 5 OR LEN(CodGrupo) >= 8)
     """
     if cod_grupo:
@@ -90,8 +90,6 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
     cond_prod = " AND ".join(where_clauses)
 
     query_sql = f"""
-        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
         WITH ProdutosBase AS (
             SELECT
                 p.IdProduto,
@@ -104,9 +102,9 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
                 g.CodGrupo,
                 g.NomeGrupo,
                 CAST(ISNULL(p.CustoCompra, 0) AS FLOAT) AS CustoCompra
-            FROM Produtos p
-            LEFT JOIN Fabricantes f ON f.CODFABR = p.CODFABR
-            LEFT JOIN Grupos g ON g.IdGrupo = p.IdGrupo
+            FROM Produtos p WITH (NOLOCK)
+            LEFT JOIN Fabricantes f WITH (NOLOCK) ON f.CODFABR = p.CODFABR
+            LEFT JOIN Grupos g WITH (NOLOCK) ON g.IdGrupo = p.IdGrupo
             WHERE {cond_prod}
         ),
         ComprasBase AS (
@@ -116,8 +114,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
                     (CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / 
                     NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0)
                 ) AS QtdComprada
-            FROM ItensMov i
-            INNER JOIN Movimento m ON m.IdMov = i.IdMov
+            FROM ItensMov i WITH (NOLOCK)
+            INNER JOIN Movimento m WITH (NOLOCK) ON m.IdMov = i.IdMov
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '1.1'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
@@ -133,8 +131,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
                 SUM(CASE WHEN m.CodFilial = 3 THEN (CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0) ELSE 0 END) AS VendaPBZS,
                 SUM(CASE WHEN m.CodFilial = 4 THEN (CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0) ELSE 0 END) AS VendaPBZN,
                 SUM((CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0)) AS TotalVendas
-            FROM ItensMov i
-            INNER JOIN Movimento m ON m.IdMov = i.IdMov
+            FROM ItensMov i WITH (NOLOCK)
+            INNER JOIN Movimento m WITH (NOLOCK) ON m.IdMov = i.IdMov
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '2.4' AND m.NfeStatus = 'U'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
@@ -150,7 +148,7 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
                 SUM(CASE WHEN e.CodFilial = 3 THEN CAST(e.EstoqueAtual AS FLOAT) ELSE 0 END) AS EstPBZS,
                 SUM(CASE WHEN e.CodFilial = 4 THEN CAST(e.EstoqueAtual AS FLOAT) ELSE 0 END) AS EstPBZN,
                 SUM(CAST(e.EstoqueAtual AS FLOAT)) AS EstTotal
-            FROM EstqProdutos e
+            FROM EstqProdutos e WITH (NOLOCK)
             WHERE e.CodLocal = '01'
             GROUP BY e.IdProduto
         )
@@ -179,7 +177,7 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
         LEFT JOIN ComprasBase cb ON cb.IdProduto = pb.IdProduto
         LEFT JOIN EstoqueBase eb ON eb.IdProduto = pb.IdProduto
         WHERE ISNULL(vb.TotalVendas, 0) > 0 OR ISNULL(cb.QtdComprada, 0) > 0 OR ISNULL(eb.EstTotal, 0) > 0
-        ORDER BY pb.NOMEPRODUTO;
+        ORDER BY pb.NOMEPRODUTO
     """
     
     with engine.connect() as conn:

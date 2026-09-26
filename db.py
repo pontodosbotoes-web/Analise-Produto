@@ -11,7 +11,8 @@ def get_engine():
 def carregar_fabricantes():
     engine = get_engine()
     query = "SELECT DISTINCT NOMEFABR FROM Fabricantes WHERE NOMEFABR IS NOT NULL ORDER BY NOMEFABR"
-    df = pd.read_sql_query(query, engine)
+    with engine.raw_connection() as conn:
+        df = pd.read_sql_query(query, conn)
     return df['NOMEFABR'].tolist()
 
 @st.cache_data(ttl=3600)
@@ -23,7 +24,8 @@ def carregar_departamentos():
         WHERE LEN(REPLACE(CodGrupo, '.', '')) = 2 OR LEN(CodGrupo) = 2
         ORDER BY NomeGrupo
     """
-    df = pd.read_sql_query(query, engine)
+    with engine.raw_connection() as conn:
+        df = pd.read_sql_query(query, conn)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
 
 @st.cache_data(ttl=3600)
@@ -38,7 +40,9 @@ def carregar_grupos(cod_depto=None):
         depto_esc = str(cod_depto).replace("'", "''")
         query += f" AND LEFT(CodGrupo, 2) = '{depto_esc}'"
     query += " ORDER BY NomeGrupo"
-    df = pd.read_sql_query(query, engine)
+    
+    with engine.raw_connection() as conn:
+        df = pd.read_sql_query(query, conn)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
 
 @st.cache_data(ttl=3600)
@@ -53,7 +57,9 @@ def carregar_subgrupos(cod_grupo=None):
         grupo_esc = str(cod_grupo).replace("'", "''")
         query += f" AND LEFT(CodGrupo, 5) = '{grupo_esc}'"
     query += " ORDER BY NomeGrupo"
-    df = pd.read_sql_query(query, engine)
+    
+    with engine.raw_connection() as conn:
+        df = pd.read_sql_query(query, conn)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
 
 def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, data_ini_venda, data_fim_venda, data_ini_compra, data_fim_compra):
@@ -83,6 +89,7 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
 
     cond_prod = " AND ".join(where_clauses)
 
+    # Nomes dos aliases ajustados sem caracteres especiais no SQL (a renomeacao final é feita pelo Pandas)
     query_sql = f"""
         WITH ProdutosBase AS (
             SELECT
@@ -110,8 +117,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '1.1'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-              AND m.DtFinalizacao >= CONVERT(DATETIME, '{dt_c_ini_str}', 120)
-              AND m.DtFinalizacao < DATEADD(DAY, 1, CONVERT(DATETIME, '{dt_c_fim_str}', 120))
+              AND m.DtFinalizacao >= '{dt_c_ini_str}'
+              AND m.DtFinalizacao < DATEADD(DAY, 1, '{dt_c_fim_str}')
             GROUP BY i.IdProduto
         ),
         VendasBase AS (
@@ -127,8 +134,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '2.4' AND m.NfeStatus = 'U'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-              AND m.DtFinalizacao >= CONVERT(DATETIME, '{dt_v_ini_str}', 120)
-              AND m.DtFinalizacao < DATEADD(DAY, 1, CONVERT(DATETIME, '{dt_v_fim_str}', 120))
+              AND m.DtFinalizacao >= '{dt_v_ini_str}'
+              AND m.DtFinalizacao < DATEADD(DAY, 1, '{dt_v_fim_str}')
             GROUP BY i.IdProduto
         ),
         EstoqueBase AS (
@@ -144,25 +151,25 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             GROUP BY e.IdProduto
         )
         SELECT 
-            pb.CODPRODUTO AS [Código],
-            pb.CodProdutoFabr AS [Ref. Fabr.],
-            pb.NOMEPRODUTO AS [Descrição],
-            pb.UNID AS [Unid],
-            CAST(ISNULL(pb.CustoCompra, 0) AS DECIMAL(18, 2)) AS [Custo Compra],
+            pb.CODPRODUTO AS Codigo,
+            pb.CodProdutoFabr AS RefFabr,
+            pb.NOMEPRODUTO AS Descricao,
+            pb.UNID AS Unid,
+            CAST(ISNULL(pb.CustoCompra, 0) AS DECIMAL(18, 2)) AS CustoCompra,
             
-            ISNULL(eb.EstPBAL, 0) AS [Est. Alecrim],
-            ISNULL(eb.EstPBVIA, 0) AS [Est. Via Direta],
-            ISNULL(eb.EstPBZS, 0) AS [Est. Zona Sul],
-            ISNULL(eb.EstPBZN, 0) AS [Est. Zona Norte],
-            ISNULL(eb.EstTotal, 0) AS [Est. Total],
+            ISNULL(eb.EstPBAL, 0) AS EstAlecrim,
+            ISNULL(eb.EstPBVIA, 0) AS EstViaDireta,
+            ISNULL(eb.EstPBZS, 0) AS EstZonaSul,
+            ISNULL(eb.EstPBZN, 0) AS EstZonaNorte,
+            ISNULL(eb.EstTotal, 0) AS EstTotal,
             
-            ISNULL(vb.VendaPBAL, 0) AS [Venda PBAL],
-            ISNULL(vb.VendaPBVIA, 0) AS [Venda PBVIA],
-            ISNULL(vb.VendaPBZS, 0) AS [Venda PBZS],
-            ISNULL(vb.VendaPBZN, 0) AS [Venda PBZN],
-            ISNULL(vb.TotalVendas, 0) AS [Total Vendas],
+            ISNULL(vb.VendaPBAL, 0) AS VendaPBAL,
+            ISNULL(vb.VendaPBVIA, 0) AS VendaPBVIA,
+            ISNULL(vb.VendaPBZS, 0) AS VendaPBZS,
+            ISNULL(vb.VendaPBZN, 0) AS VendaPBZN,
+            ISNULL(vb.TotalVendas, 0) AS TotalVendas,
             
-            ISNULL(cb.QtdComprada, 0) AS [Qtd Comprada]
+            ISNULL(cb.QtdComprada, 0) AS QtdComprada
         FROM ProdutosBase pb
         LEFT JOIN VendasBase vb ON vb.IdProduto = pb.IdProduto
         LEFT JOIN ComprasBase cb ON cb.IdProduto = pb.IdProduto
@@ -171,10 +178,30 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
         ORDER BY pb.NOMEPRODUTO
     """
     
-    # Executa direto via pd.read_sql_query passando o engine diretamente
-    df = pd.read_sql_query(query_sql, engine)
+    # Execução através do driver pymssql direto (ignora SQLAlchemy wrapper)
+    with engine.raw_connection() as conn:
+        df = pd.read_sql_query(query_sql, conn)
         
     if not df.empty:
+        # Renomeia colunas no Pandas para exibição limpa no Streamlit
+        df = df.rename(columns={
+            "Codigo": "Código",
+            "RefFabr": "Ref. Fabr.",
+            "Descricao": "Descrição",
+            "CustoCompra": "Custo Compra",
+            "EstAlecrim": "Est. Alecrim",
+            "EstViaDireta": "Est. Via Direta",
+            "EstZonaSul": "Est. Zona Sul",
+            "EstZonaNorte": "Est. Zona Norte",
+            "EstTotal": "Est. Total",
+            "VendaPBAL": "Venda PBAL",
+            "VendaPBVIA": "Venda PBVIA",
+            "VendaPBZS": "Venda PBZS",
+            "VendaPBZN": "Venda PBZN",
+            "TotalVendas": "Total Vendas",
+            "QtdComprada": "Qtd Comprada"
+        })
+        
         df["Venda Média/Dia"] = df["Total Vendas"] / dias_periodo
         df["Cobertura (Dias)"] = df.apply(
             lambda r: round(r["Est. Total"] / r["Venda Média/Dia"], 1) if r["Venda Média/Dia"] > 0 else (999.0 if r["Est. Total"] > 0 else 0.0), 

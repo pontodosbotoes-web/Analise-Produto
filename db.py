@@ -65,10 +65,10 @@ def carregar_subgrupos(cod_grupo=None):
 def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, data_ini_venda, data_fim_venda, data_ini_compra, data_fim_compra):
     engine = get_engine()
     
-    dt_v_ini_str = data_ini_venda.strftime('%Y-%m-%d')
-    dt_v_fim_str = data_fim_venda.strftime('%Y-%m-%d')
-    dt_c_ini_str = data_ini_compra.strftime('%Y-%m-%d')
-    dt_c_fim_str = data_fim_compra.strftime('%Y-%m-%d')
+    dt_v_ini_str = data_ini_venda.strftime('%Y-%m-%d 00:00:00')
+    dt_v_fim_str = data_fim_venda.strftime('%Y-%m-%d 23:59:59')
+    dt_c_ini_str = data_ini_compra.strftime('%Y-%m-%d 00:00:00')
+    dt_c_fim_str = data_fim_compra.strftime('%Y-%m-%d 23:59:59')
     
     dias_periodo = max((data_fim_venda - data_ini_venda).days + 1, 1)
 
@@ -89,7 +89,6 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
 
     cond_prod = " AND ".join(where_clauses)
 
-    # Nomes dos aliases ajustados sem caracteres especiais no SQL (a renomeacao final é feita pelo Pandas)
     query_sql = f"""
         WITH ProdutosBase AS (
             SELECT
@@ -102,7 +101,7 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
                 f.NOMEFABR,
                 g.CodGrupo,
                 g.NomeGrupo,
-                p.CustoCompra
+                CAST(ISNULL(p.CustoCompra, 0) AS FLOAT) AS CustoCompra
             FROM Produtos p WITH (NOLOCK)
             LEFT JOIN Fabricantes f WITH (NOLOCK) ON f.CODFABR = p.CODFABR
             LEFT JOIN Grupos g WITH (NOLOCK) ON g.IdGrupo = p.IdGrupo
@@ -111,41 +110,44 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
         ComprasBase AS (
             SELECT
                 i.IdProduto,
-                SUM((i.Qtd - ISNULL(i.QtdCancel, 0)) / NULLIF(i.FatorConvUnid, 0)) AS QtdComprada
+                SUM(
+                    (CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / 
+                    NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0)
+                ) AS QtdComprada
             FROM ItensMov i WITH (NOLOCK)
             INNER JOIN Movimento m WITH (NOLOCK) ON m.IdMov = i.IdMov
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '1.1'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-              AND m.DtFinalizacao >= '{dt_c_ini_str}'
-              AND m.DtFinalizacao < DATEADD(DAY, 1, '{dt_c_fim_str}')
+              AND m.DtFinalizacao >= CAST('{dt_c_ini_str}' AS DATETIME)
+              AND m.DtFinalizacao <= CAST('{dt_c_fim_str}' AS DATETIME)
             GROUP BY i.IdProduto
         ),
         VendasBase AS (
             SELECT
                 i.IdProduto,
-                SUM(CASE WHEN m.CodFilial = 1 THEN (i.Qtd - ISNULL(i.QtdCancel, 0)) / NULLIF(i.FatorConvUnid, 0) ELSE 0 END) AS VendaPBAL,
-                SUM(CASE WHEN m.CodFilial = 2 THEN (i.Qtd - ISNULL(i.QtdCancel, 0)) / NULLIF(i.FatorConvUnid, 0) ELSE 0 END) AS VendaPBVIA,
-                SUM(CASE WHEN m.CodFilial = 3 THEN (i.Qtd - ISNULL(i.QtdCancel, 0)) / NULLIF(i.FatorConvUnid, 0) ELSE 0 END) AS VendaPBZS,
-                SUM(CASE WHEN m.CodFilial = 4 THEN (i.Qtd - ISNULL(i.QtdCancel, 0)) / NULLIF(i.FatorConvUnid, 0) ELSE 0 END) AS VendaPBZN,
-                SUM((i.Qtd - ISNULL(i.QtdCancel, 0)) / NULLIF(i.FatorConvUnid, 0)) AS TotalVendas
+                SUM(CASE WHEN m.CodFilial = 1 THEN (CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0) ELSE 0 END) AS VendaPBAL,
+                SUM(CASE WHEN m.CodFilial = 2 THEN (CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0) ELSE 0 END) AS VendaPBVIA,
+                SUM(CASE WHEN m.CodFilial = 3 THEN (CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0) ELSE 0 END) AS VendaPBZS,
+                SUM(CASE WHEN m.CodFilial = 4 THEN (CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0) ELSE 0 END) AS VendaPBZN,
+                SUM((CAST(ISNULL(i.Qtd, 0) AS FLOAT) - CAST(ISNULL(i.QtdCancel, 0) AS FLOAT)) / NULLIF(CAST(i.FatorConvUnid AS FLOAT), 0)) AS TotalVendas
             FROM ItensMov i WITH (NOLOCK)
             INNER JOIN Movimento m WITH (NOLOCK) ON m.IdMov = i.IdMov
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '2.4' AND m.NfeStatus = 'U'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-              AND m.DtFinalizacao >= '{dt_v_ini_str}'
-              AND m.DtFinalizacao < DATEADD(DAY, 1, '{dt_v_fim_str}')
+              AND m.DtFinalizacao >= CAST('{dt_v_ini_str}' AS DATETIME)
+              AND m.DtFinalizacao <= CAST('{dt_v_fim_str}' AS DATETIME)
             GROUP BY i.IdProduto
         ),
         EstoqueBase AS (
             SELECT
                 e.IdProduto,
-                SUM(CASE WHEN e.CodFilial = 1 THEN e.EstoqueAtual ELSE 0 END) AS EstPBAL,
-                SUM(CASE WHEN e.CodFilial = 2 THEN e.EstoqueAtual ELSE 0 END) AS EstPBVIA,
-                SUM(CASE WHEN e.CodFilial = 3 THEN e.EstoqueAtual ELSE 0 END) AS EstPBZS,
-                SUM(CASE WHEN e.CodFilial = 4 THEN e.EstoqueAtual ELSE 0 END) AS EstPBZN,
-                SUM(e.EstoqueAtual) AS EstTotal
+                SUM(CASE WHEN e.CodFilial = 1 THEN CAST(e.EstoqueAtual AS FLOAT) ELSE 0 END) AS EstPBAL,
+                SUM(CASE WHEN e.CodFilial = 2 THEN CAST(e.EstoqueAtual AS FLOAT) ELSE 0 END) AS EstPBVIA,
+                SUM(CASE WHEN e.CodFilial = 3 THEN CAST(e.EstoqueAtual AS FLOAT) ELSE 0 END) AS EstPBZS,
+                SUM(CASE WHEN e.CodFilial = 4 THEN CAST(e.EstoqueAtual AS FLOAT) ELSE 0 END) AS EstPBZN,
+                SUM(CAST(e.EstoqueAtual AS FLOAT)) AS EstTotal
             FROM EstqProdutos e WITH (NOLOCK)
             WHERE e.CodLocal = '01'
             GROUP BY e.IdProduto
@@ -155,7 +157,7 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             pb.CodProdutoFabr AS RefFabr,
             pb.NOMEPRODUTO AS Descricao,
             pb.UNID AS Unid,
-            CAST(ISNULL(pb.CustoCompra, 0) AS DECIMAL(18, 2)) AS CustoCompra,
+            pb.CustoCompra AS CustoCompra,
             
             ISNULL(eb.EstPBAL, 0) AS EstAlecrim,
             ISNULL(eb.EstPBVIA, 0) AS EstViaDireta,
@@ -178,12 +180,10 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
         ORDER BY pb.NOMEPRODUTO
     """
     
-    # Execução através do driver pymssql direto (ignora SQLAlchemy wrapper)
     with engine.raw_connection() as conn:
         df = pd.read_sql_query(query_sql, conn)
         
     if not df.empty:
-        # Renomeia colunas no Pandas para exibição limpa no Streamlit
         df = df.rename(columns={
             "Codigo": "Código",
             "RefFabr": "Ref. Fabr.",

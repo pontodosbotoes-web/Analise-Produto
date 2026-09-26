@@ -54,13 +54,15 @@ def carregar_subgrupos(cod_grupo=None):
     df = pd.read_sql(query, engine)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
 
-def buscar_produtos_movimentacao(fornecedor, depto, grupo, subgrupo, data_ini_venda, data_fim_venda, data_ini_compra, data_fim_compra):
+def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, data_ini_venda, data_fim_venda, data_ini_compra, data_fim_compra):
     engine = get_engine()
     
     dt_v_ini_str = data_ini_venda.strftime('%Y-%m-%d')
     dt_v_fim_str = data_fim_venda.strftime('%Y-%m-%d')
     dt_c_ini_str = data_ini_compra.strftime('%Y-%m-%d')
     dt_c_fim_str = data_fim_compra.strftime('%Y-%m-%d')
+    
+    dias_periodo = max((data_fim_venda - data_ini_venda).days + 1, 1)
 
     query_sql = """
         DECLARE @dataInicioVenda DATE = :dt_ini_venda;
@@ -130,6 +132,18 @@ def buscar_produtos_movimentacao(fornecedor, depto, grupo, subgrupo, data_ini_ve
                 AND (@filtroSubgrupo IS NULL OR g.CodGrupo = @filtroSubgrupo)
             GROUP BY p.IdProduto
         ),
+        EstoquePivot AS (
+            SELECT 
+                e.IdProduto,
+                SUM(CASE WHEN e.CodFilial = 1 THEN e.EstoqueAtual ELSE 0 END) AS EstPBAL,
+                SUM(CASE WHEN e.CodFilial = 2 THEN e.EstoqueAtual ELSE 0 END) AS EstPBVIA,
+                SUM(CASE WHEN e.CodFilial = 3 THEN e.EstoqueAtual ELSE 0 END) AS EstPBZS,
+                SUM(CASE WHEN e.CodFilial = 4 THEN e.EstoqueAtual ELSE 0 END) AS EstPBZN,
+                SUM(e.EstoqueAtual) AS EstTotal
+            FROM EstqProdutos e WITH (NOLOCK)
+            WHERE e.CodLocal = '01'
+            GROUP BY e.IdProduto
+        ),
         ProdutosFiltrados AS (
             SELECT DISTINCT
                 p.IdProduto,
@@ -154,6 +168,15 @@ def buscar_produtos_movimentacao(fornecedor, depto, grupo, subgrupo, data_ini_ve
             pf.DescricaoProduto AS [Descrição],
             pf.Unidade AS [Unid],
             pf.CustoCompra AS [Custo Compra],
+            
+            -- Estoque Comercial por Filial (CodLocal = '01')
+            ISNULL(ep.EstPBAL, 0)  AS [Est. Alecrim],
+            ISNULL(ep.EstPBVIA, 0) AS [Est. Via Direta],
+            ISNULL(ep.EstPBZS, 0)  AS [Est. Zona Sul],
+            ISNULL(ep.EstPBZN, 0)  AS [Est. Zona Norte],
+            ISNULL(ep.EstTotal, 0) AS [Est. Total],
+            
+            -- Vendas por Filial
             ISNULL(vp.QtdVendidaPBAL, 0)  AS [Venda PBAL],
             ISNULL(vp.QtdVendidaPBVIA, 0) AS [Venda PBVIA],
             ISNULL(vp.QtdVendidaPBZS, 0)  AS [Venda PBZS],
@@ -163,7 +186,8 @@ def buscar_produtos_movimentacao(fornecedor, depto, grupo, subgrupo, data_ini_ve
         FROM ProdutosFiltrados pf
         LEFT JOIN VendasPivot vp ON pf.IdProduto = vp.IdProduto
         LEFT JOIN ComprasBase cb ON pf.IdProduto = cb.IdProduto
-        WHERE ISNULL(vp.QtdTotalVendida, 0) > 0 OR ISNULL(cb.QtdComprada, 0) > 0
+        LEFT JOIN EstoquePivot ep ON pf.IdProduto = ep.IdProduto
+        WHERE ISNULL(vp.QtdTotalVendida, 0) > 0 OR ISNULL(cb.QtdComprada, 0) > 0 OR ISNULL(ep.EstTotal, 0) > 0
         ORDER BY pf.DescricaoProduto;
     """
     
@@ -180,5 +204,14 @@ def buscar_produtos_movimentacao(fornecedor, depto, grupo, subgrupo, data_ini_ve
     
     with engine.connect() as conn:
         df = pd.read_sql(text(query_sql), conn, params=params)
+        
+    # Cálculos de Cobertura e Giro em Python (Alta Performance)
+    if not df.empty:
+        df["Venda Média/Dia"] = df["Total Vendas"] / dias_periodo
+        df["Cobertura (Dias)"] = df.apply(
+            lambda r: round(r["Est. Total"] / r["Venda Média/Dia"], 1) if r["Venda Média/Dia"] > 0 else (999.0 if r["Est. Total"] > 0 else 0.0), 
+            axis=1
+        )
+        df["Valor em Estoque (R$)"] = df["Est. Total"] * df["Custo Compra"]
     
     return df

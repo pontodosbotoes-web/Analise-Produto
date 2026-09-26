@@ -7,7 +7,7 @@ from db import (
     carregar_departamentos, 
     carregar_grupos, 
     carregar_subgrupos, 
-    buscar_produtos_movimentacao
+    buscar_produtos_movimentacao_completa
 )
 from reportlab.lib.pagesizes import A4, portrait
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -15,79 +15,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 
-class NumberedCanvas(canvas.Canvas):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._saved_page_states = []
-
-    def showPage(self):
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
-
-    def save(self):
-        num_pages = len(self._saved_page_states)
-        for state in self._saved_page_states:
-            self.__dict__.update(state)
-            self.draw_page_number(num_pages)
-            super().showPage()
-        super().save()
-
-    def draw_page_number(self, page_count):
-        self.setFont("Helvetica", 7)
-        self.setFillColor(colors.HexColor('#64748B'))
-        page_text = f"Página {self._pageNumber} de {page_count}"
-        self.drawCentredString(A4[0] / 2.0, 10, page_text)
-
-def gerar_pdf(df, fornecedor, p_venda, p_compra):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=portrait(A4), rightMargin=10, leftMargin=10, topMargin=15, bottomMargin=25
-    )
-    elements = []
-    styles = getSampleStyleSheet()
-    
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=11, leading=13, textColor=colors.HexColor('#1E293B'), alignment=1)
-    sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=7, leading=9, textColor=colors.HexColor('#475569'), alignment=1)
-    
-    elements.append(Paragraph(f"<b>Ponto dos Botões - Relatório de Movimentação ({fornecedor or 'Geral'})</b>", title_style))
-    elements.append(Paragraph(f"Período Venda: {p_venda} | Período Compra: {p_compra} | Total Itens: {len(df)}", sub_style))
-    elements.append(Spacer(1, 8))
-    
-    cell_style = ParagraphStyle('CellText', parent=styles['Normal'], fontSize=6, leading=7)
-    cell_header = ParagraphStyle('CellHeader', parent=styles['Normal'], fontSize=6, leading=7, textColor=colors.white, fontName='Helvetica-Bold', alignment=1)
-
-    headers = [Paragraph(col, cell_header) for col in df.columns]
-    table_data = [headers]
-
-    for _, row in df.iterrows():
-        row_cells = []
-        for col, val in row.items():
-            if 'Descrição' in col:
-                row_cells.append(Paragraph(str(val), cell_style))
-            elif isinstance(val, (int, float)):
-                row_cells.append(f"{val:,.0f}" if val != 0 else "0")
-            else:
-                row_cells.append(str(val))
-        table_data.append(row_cells)
-
-    col_widths = [18, 40, 45, 200, 25, 30, 30, 30, 30, 38, 38]
-    
-    t = Table(table_data, colWidths=col_widths, repeatRows=1)
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E293B')),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('ALIGN', (3, 1), (3, -1), 'LEFT'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#CBD5E1')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')])
-    ]))
-    
-    elements.append(t)
-    doc.build(elements, canvasmaker=NumberedCanvas)
-    buffer.seek(0)
-    return buffer
-
-st.set_page_config(page_title="Ponto dos Botões - Análise Web", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="Ponto dos Botões - Gestão de Giro e Estoque", layout="wide", page_icon="🛍️")
 
 hoje = date.today()
 dias_30_atras = hoje - timedelta(days=30)
@@ -104,7 +32,7 @@ def limpar_filtros():
 lista_fornecedores = carregar_fabricantes()
 dict_deptos = carregar_departamentos()
 
-st.markdown('<h2 style="text-align: center; margin-bottom: 20px;">🛍️ Ponto dos Botões — Movimentação e Análise de Produtos</h2>', unsafe_allow_html=True)
+st.markdown('<h2 style="text-align: center; margin-bottom: 20px;">🛍️ Ponto dos Botões — Análise Completa de Giro, Vendas e Estoque</h2>', unsafe_allow_html=True)
 
 col_venda, col_compra, col_forn, col_dep, col_grp, col_sub, col_btn_consultar, col_btn_limpar = st.columns([1.8, 1.8, 2.2, 1.6, 1.6, 1.6, 0.5, 0.5])
 
@@ -153,8 +81,8 @@ c_ini = compra_datas[0] if isinstance(compra_datas, tuple) and len(compra_datas)
 c_fim = compra_datas[1] if isinstance(compra_datas, tuple) and len(compra_datas) > 1 else c_ini
 
 if btn_consultar:
-    with st.spinner("Consultando banco de dados DBcronos..."):
-        df = buscar_produtos_movimentacao(
+    with st.spinner("Consultando dados de movimentação e estoque comercial..."):
+        df = buscar_produtos_movimentacao_completa(
             fornecedor_sel, 
             cod_depto, 
             cod_grupo, 
@@ -171,25 +99,14 @@ if "df_mov" in st.session_state:
     df = st.session_state["df_mov"]
     fornecedor = st.session_state.get("fornecedor_atual")
     
-    col_inf, col_m1, col_m2, col_btn_pdf = st.columns([3, 2, 2, 1.5])
-    col_inf.caption(f"**Filtro:** {fornecedor or 'Geral'} ({len(df)} produtos localizados)")
-    col_m1.caption(f"**Total Comprado:** {df['Qtd Comprada'].sum():,.0f}" if 'Qtd Comprada' in df.columns else "")
-    col_m2.caption(f"**Total Vendido:** {df['Total Vendas'].sum():,.0f}" if 'Total Vendas' in df.columns else "")
+    # Cards de Resumo Executivo
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Itens Encontrados", f"{len(df):,}")
+    m2.metric("Total Vendido (Unid)", f"{df['Total Vendas'].sum():,.0f}")
+    m3.metric("Estoque Comercial (Unid)", f"{df['Est. Total'].sum():,.0f}")
+    m4.metric("Valor Total Estoque", f"R$ {df['Valor em Estoque (R$)'].sum():,.2f}")
 
-    with col_btn_pdf:
-        pdf_bytes = gerar_pdf(
-            df, 
-            fornecedor, 
-            f"{v_ini.strftime('%d/%m/%Y')} a {v_fim.strftime('%d/%m/%Y')}",
-            f"{c_ini.strftime('%d/%m/%Y')} a {c_fim.strftime('%d/%m/%Y')}"
-        )
-        st.download_button(
-            label="📄 PDF",
-            data=pdf_bytes,
-            file_name=f"Movimentacao_{fornecedor or 'Geral'}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+    st.markdown("---")
 
     st.dataframe(
         df,
@@ -202,11 +119,18 @@ if "df_mov" in st.session_state:
             "Descrição": st.column_config.TextColumn("Descrição", width="large"),
             "Unid": st.column_config.TextColumn("Unid", width="small"),
             "Custo Compra": st.column_config.NumberColumn("Custo (R$)", format="R$ %.2f"),
-            "Venda PBAL": st.column_config.NumberColumn("Alecrim", format="%.0f"),
-            "Venda PBVIA": st.column_config.NumberColumn("Via Direta", format="%.0f"),
-            "Venda PBZS": st.column_config.NumberColumn("Zona Sul", format="%.0f"),
-            "Venda PBZN": st.column_config.NumberColumn("Zona Norte", format="%.0f"),
+            "Est. Alecrim": st.column_config.NumberColumn("Est. AL", format="%.0f"),
+            "Est. Via Direta": st.column_config.NumberColumn("Est. VIA", format="%.0f"),
+            "Est. Zona Sul": st.column_config.NumberColumn("Est. ZS", format="%.0f"),
+            "Est. Zona Norte": st.column_config.NumberColumn("Est. ZN", format="%.0f"),
+            "Est. Total": st.column_config.NumberColumn("Est. Total", format="%.0f"),
+            "Venda PBAL": st.column_config.NumberColumn("Vda AL", format="%.0f"),
+            "Venda PBVIA": st.column_config.NumberColumn("Vda VIA", format="%.0f"),
+            "Venda PBZS": st.column_config.NumberColumn("Vda ZS", format="%.0f"),
+            "Venda PBZN": st.column_config.NumberColumn("Vda ZN", format="%.0f"),
             "Total Vendas": st.column_config.NumberColumn("Tot. Vendas", format="%.0f"),
             "Qtd Comprada": st.column_config.NumberColumn("Qtd Compra", format="%.0f"),
+            "Cobertura (Dias)": st.column_config.NumberColumn("Cobertura (Dias)", format="%.1f d"),
+            "Valor em Estoque (R$)": st.column_config.NumberColumn("Valor Est. (R$)", format="R$ %.2f"),
         }
     )

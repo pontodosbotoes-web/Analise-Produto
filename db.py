@@ -64,7 +64,21 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
     
     dias_periodo = max((data_fim_venda - data_ini_venda).days + 1, 1)
 
-    query_sql = """
+    # Construção dinâmica de filtros para evitar repetição de parâmetros no pymssql
+    cond_prod_list = ["p.ProdutoInativo = 'N'"]
+    
+    if fornecedor:
+        cond_prod_list.append(f"f.NOMEFABR = '{fornecedor.replace("'", "''")}'")
+    if depto:
+        cond_prod_list.append(f"LEFT(g.CodGrupo, 2) = '{depto}'")
+    if grupo:
+        cond_prod_list.append(f"LEFT(g.CodGrupo, 5) = '{grupo}'")
+    if subgrupo:
+        cond_prod_list.append(f"g.CodGrupo = '{subgrupo}'")
+        
+    cond_prod = " AND ".join(cond_prod_list)
+
+    query_sql = f"""
         WITH VendasBase AS (
             SELECT 
                 p.IdProduto,
@@ -79,17 +93,13 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             LEFT JOIN Grupos g WITH (NOLOCK) ON p.IdGrupo = g.IdGrupo
             INNER JOIN ItensMov i WITH (NOLOCK) ON p.IdProduto = i.IdProduto
             INNER JOIN Movimento m WITH (NOLOCK) ON i.IdMov = m.IdMov
-            WHERE p.ProdutoInativo = 'N'
+            WHERE {cond_prod}
                 AND m.CodLocal = '01'
                 AND m.TipoMov IN ('2.4', '2.3', '2.8')
                 AND (m.TipoMov != '2.4' OR m.NfeStatus = 'U')
-                AND m.DtFinalizacao >= :dt_v_ini
-                AND m.DtFinalizacao < DATEADD(day, 1, :dt_v_fim)
+                AND m.DtFinalizacao >= '{dt_v_ini_str}'
+                AND m.DtFinalizacao < DATEADD(day, 1, '{dt_v_fim_str}')
                 AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-                AND (:fornecedor IS NULL OR f.NOMEFABR = :fornecedor)
-                AND (:depto IS NULL OR LEFT(g.CodGrupo, 2) = :depto)
-                AND (:grupo IS NULL OR LEFT(g.CodGrupo, 5) = :grupo)
-                AND (:subgrupo IS NULL OR g.CodGrupo = :subgrupo)
         ),
         VendasPivot AS (
             SELECT 
@@ -111,16 +121,12 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             LEFT JOIN Grupos g WITH (NOLOCK) ON p.IdGrupo = g.IdGrupo
             INNER JOIN ItensMov i WITH (NOLOCK) ON p.IdProduto = i.IdProduto
             INNER JOIN Movimento m WITH (NOLOCK) ON i.IdMov = m.IdMov
-            WHERE p.ProdutoInativo = 'N'
+            WHERE {cond_prod}
                 AND m.CodLocal = '01'
                 AND m.TipoMov IN ('1.1', '1.6')
-                AND m.DtFinalizacao >= :dt_c_ini
-                AND m.DtFinalizacao < DATEADD(day, 1, :dt_c_fim)
+                AND m.DtFinalizacao >= '{dt_c_ini_str}'
+                AND m.DtFinalizacao < DATEADD(day, 1, '{dt_c_fim_str}')
                 AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-                AND (:fornecedor IS NULL OR f.NOMEFABR = :fornecedor)
-                AND (:depto IS NULL OR LEFT(g.CodGrupo, 2) = :depto)
-                AND (:grupo IS NULL OR LEFT(g.CodGrupo, 5) = :grupo)
-                AND (:subgrupo IS NULL OR g.CodGrupo = :subgrupo)
             GROUP BY p.IdProduto
         ),
         EstoquePivot AS (
@@ -146,11 +152,7 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             FROM Produtos p WITH (NOLOCK)
             INNER JOIN Fabricantes f WITH (NOLOCK) ON p.CODFABR = f.CODFABR
             LEFT JOIN Grupos g WITH (NOLOCK) ON p.IdGrupo = g.IdGrupo
-            WHERE p.ProdutoInativo = 'N'
-              AND (:fornecedor IS NULL OR f.NOMEFABR = :fornecedor)
-              AND (:depto IS NULL OR LEFT(g.CodGrupo, 2) = :depto)
-              AND (:grupo IS NULL OR LEFT(g.CodGrupo, 5) = :grupo)
-              AND (:subgrupo IS NULL OR g.CodGrupo = :subgrupo)
+            WHERE {cond_prod}
         )
         SELECT 
             ROW_NUMBER() OVER (ORDER BY pf.DescricaoProduto) AS [Nº],
@@ -180,19 +182,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
         ORDER BY pf.DescricaoProduto;
     """
     
-    params = {
-        "fornecedor": fornecedor if fornecedor else None,
-        "depto": depto if depto else None,
-        "grupo": grupo if grupo else None,
-        "subgrupo": subgrupo if subgrupo else None,
-        "dt_v_ini": dt_v_ini_str,
-        "dt_v_fim": dt_v_fim_str,
-        "dt_c_ini": dt_c_ini_str,
-        "dt_c_fim": dt_c_fim_str
-    }
-    
     with engine.connect() as conn:
-        df = pd.read_sql(text(query_sql), conn, params=params)
+        df = pd.read_sql(text(query_sql), conn)
         
     if not df.empty:
         df["Venda Média/Dia"] = df["Total Vendas"] / dias_periodo

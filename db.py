@@ -65,15 +65,6 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
     dias_periodo = max((data_fim_venda - data_ini_venda).days + 1, 1)
 
     query_sql = """
-        DECLARE @dataInicioVenda DATE = :dt_ini_venda;
-        DECLARE @dataFimVenda DATE    = :dt_fim_venda;
-        DECLARE @dataInicioCompra DATE = :dt_ini_compra;
-        DECLARE @dataFimCompra DATE    = :dt_fim_compra;
-        DECLARE @filtroFabricante VARCHAR(100) = :fornecedor;
-        DECLARE @filtroDepto VARCHAR(10) = :depto;
-        DECLARE @filtroGrupo VARCHAR(10) = :grupo;
-        DECLARE @filtroSubgrupo VARCHAR(20) = :subgrupo;
-
         WITH VendasBase AS (
             SELECT 
                 p.IdProduto,
@@ -92,13 +83,13 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
                 AND m.CodLocal = '01'
                 AND m.TipoMov IN ('2.4', '2.3', '2.8')
                 AND (m.TipoMov != '2.4' OR m.NfeStatus = 'U')
-                AND m.DtFinalizacao >= @dataInicioVenda
-                AND m.DtFinalizacao < DATEADD(day, 1, @dataFimVenda)
+                AND m.DtFinalizacao >= :dt_v_ini
+                AND m.DtFinalizacao < DATEADD(day, 1, :dt_v_fim)
                 AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-                AND (@filtroFabricante IS NULL OR f.NOMEFABR = @filtroFabricante)
-                AND (@filtroDepto IS NULL OR LEFT(g.CodGrupo, 2) = @filtroDepto)
-                AND (@filtroGrupo IS NULL OR LEFT(g.CodGrupo, 5) = @filtroGrupo)
-                AND (@filtroSubgrupo IS NULL OR g.CodGrupo = @filtroSubgrupo)
+                AND (:fornecedor IS NULL OR f.NOMEFABR = :fornecedor)
+                AND (:depto IS NULL OR LEFT(g.CodGrupo, 2) = :depto)
+                AND (:grupo IS NULL OR LEFT(g.CodGrupo, 5) = :grupo)
+                AND (:subgrupo IS NULL OR g.CodGrupo = :subgrupo)
         ),
         VendasPivot AS (
             SELECT 
@@ -123,13 +114,13 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             WHERE p.ProdutoInativo = 'N'
                 AND m.CodLocal = '01'
                 AND m.TipoMov IN ('1.1', '1.6')
-                AND m.DtFinalizacao >= @dataInicioCompra
-                AND m.DtFinalizacao < DATEADD(day, 1, @dataFimCompra)
+                AND m.DtFinalizacao >= :dt_c_ini
+                AND m.DtFinalizacao < DATEADD(day, 1, :dt_c_fim)
                 AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-                AND (@filtroFabricante IS NULL OR f.NOMEFABR = @filtroFabricante)
-                AND (@filtroDepto IS NULL OR LEFT(g.CodGrupo, 2) = @filtroDepto)
-                AND (@filtroGrupo IS NULL OR LEFT(g.CodGrupo, 5) = @filtroGrupo)
-                AND (@filtroSubgrupo IS NULL OR g.CodGrupo = @filtroSubgrupo)
+                AND (:fornecedor IS NULL OR f.NOMEFABR = :fornecedor)
+                AND (:depto IS NULL OR LEFT(g.CodGrupo, 2) = :depto)
+                AND (:grupo IS NULL OR LEFT(g.CodGrupo, 5) = :grupo)
+                AND (:subgrupo IS NULL OR g.CodGrupo = :subgrupo)
             GROUP BY p.IdProduto
         ),
         EstoquePivot AS (
@@ -156,10 +147,10 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             INNER JOIN Fabricantes f WITH (NOLOCK) ON p.CODFABR = f.CODFABR
             LEFT JOIN Grupos g WITH (NOLOCK) ON p.IdGrupo = g.IdGrupo
             WHERE p.ProdutoInativo = 'N'
-              AND (@filtroFabricante IS NULL OR f.NOMEFABR = @filtroFabricante)
-              AND (@filtroDepto IS NULL OR LEFT(g.CodGrupo, 2) = @filtroDepto)
-              AND (@filtroGrupo IS NULL OR LEFT(g.CodGrupo, 5) = @filtroGrupo)
-              AND (@filtroSubgrupo IS NULL OR g.CodGrupo = @filtroSubgrupo)
+              AND (:fornecedor IS NULL OR f.NOMEFABR = :fornecedor)
+              AND (:depto IS NULL OR LEFT(g.CodGrupo, 2) = :depto)
+              AND (:grupo IS NULL OR LEFT(g.CodGrupo, 5) = :grupo)
+              AND (:subgrupo IS NULL OR g.CodGrupo = :subgrupo)
         )
         SELECT 
             ROW_NUMBER() OVER (ORDER BY pf.DescricaoProduto) AS [Nº],
@@ -169,14 +160,12 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             pf.Unidade AS [Unid],
             pf.CustoCompra AS [Custo Compra],
             
-            -- Estoque Comercial por Filial (CodLocal = '01')
             ISNULL(ep.EstPBAL, 0)  AS [Est. Alecrim],
             ISNULL(ep.EstPBVIA, 0) AS [Est. Via Direta],
             ISNULL(ep.EstPBZS, 0)  AS [Est. Zona Sul],
             ISNULL(ep.EstPBZN, 0)  AS [Est. Zona Norte],
             ISNULL(ep.EstTotal, 0) AS [Est. Total],
             
-            -- Vendas por Filial
             ISNULL(vp.QtdVendidaPBAL, 0)  AS [Venda PBAL],
             ISNULL(vp.QtdVendidaPBVIA, 0) AS [Venda PBVIA],
             ISNULL(vp.QtdVendidaPBZS, 0)  AS [Venda PBZS],
@@ -196,16 +185,15 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
         "depto": depto if depto else None,
         "grupo": grupo if grupo else None,
         "subgrupo": subgrupo if subgrupo else None,
-        "dt_ini_venda": dt_v_ini_str,
-        "dt_fim_venda": dt_v_fim_str,
-        "dt_ini_compra": dt_c_ini_str,
-        "dt_fim_compra": dt_c_fim_str
+        "dt_v_ini": dt_v_ini_str,
+        "dt_v_fim": dt_v_fim_str,
+        "dt_c_ini": dt_c_ini_str,
+        "dt_c_fim": dt_c_fim_str
     }
     
     with engine.connect() as conn:
         df = pd.read_sql(text(query_sql), conn, params=params)
         
-    # Cálculos de Cobertura e Giro em Python (Alta Performance)
     if not df.empty:
         df["Venda Média/Dia"] = df["Total Vendas"] / dias_periodo
         df["Cobertura (Dias)"] = df.apply(

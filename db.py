@@ -67,7 +67,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
     cond_prod_list = ["LEFT(g.CodGrupo, 2) NOT IN ('09', '10')", "p.ProdutoInativo = 'N'"]
     
     if fornecedor:
-        cond_prod_list.append(f"f.NOMEFABR = '{fornecedor.replace("'", "''")}'")
+        fornecedor_escaped = fornecedor.replace("'", "''")
+        cond_prod_list.append(f"f.NOMEFABR = '{fornecedor_escaped}'")
     if depto:
         cond_prod_list.append(f"LEFT(g.CodGrupo, 2) = '{depto}'")
     if grupo:
@@ -162,7 +163,7 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
         LEFT JOIN ComprasBase cb ON cb.IdProduto = pb.IdProduto
         LEFT JOIN EstoqueBase eb ON eb.IdProduto = pb.IdProduto
         WHERE ISNULL(vb.TotalVendas, 0) > 0 OR ISNULL(cb.QtdComprada, 0) > 0 OR ISNULL(eb.EstTotal, 0) > 0
-        ORDER BY pb.NOMEPRODUTO;
+        ORDER BY pb.NOMEPRODUTO
     """
     
     with engine.connect() as conn:

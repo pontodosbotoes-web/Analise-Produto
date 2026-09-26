@@ -35,7 +35,8 @@ def carregar_grupos(cod_depto=None):
         WHERE (LEN(REPLACE(CodGrupo, '.', '')) = 4 OR LEN(CodGrupo) = 5)
     """
     if cod_depto:
-        query += f" AND LEFT(CodGrupo, 2) = '{cod_depto}'"
+        depto_esc = str(cod_depto).replace("'", "''")
+        query += f" AND LEFT(CodGrupo, 2) = '{depto_esc}'"
     query += " ORDER BY NomeGrupo"
     df = pd.read_sql(query, engine)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
@@ -49,7 +50,8 @@ def carregar_subgrupos(cod_grupo=None):
         WHERE (LEN(REPLACE(CodGrupo, '.', '')) > 5 OR LEN(CodGrupo) >= 8)
     """
     if cod_grupo:
-        query += f" AND LEFT(CodGrupo, 5) = '{cod_grupo}'"
+        grupo_esc = str(cod_grupo).replace("'", "''")
+        query += f" AND LEFT(CodGrupo, 5) = '{grupo_esc}'"
     query += " ORDER BY NomeGrupo"
     df = pd.read_sql(query, engine)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
@@ -57,28 +59,27 @@ def carregar_subgrupos(cod_grupo=None):
 def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, data_ini_venda, data_fim_venda, data_ini_compra, data_fim_compra):
     engine = get_engine()
     
+    dt_v_ini_str = data_ini_venda.strftime('%Y-%m-%d')
+    dt_v_fim_str = data_fim_venda.strftime('%Y-%m-%d')
+    dt_c_ini_str = data_ini_compra.strftime('%Y-%m-%d')
+    dt_c_fim_str = data_fim_compra.strftime('%Y-%m-%d')
+    
     dias_periodo = max((data_fim_venda - data_ini_venda).days + 1, 1)
 
     where_clauses = ["LEFT(g.CodGrupo, 2) NOT IN ('09', '10')", "p.ProdutoInativo = 'N'"]
-    params = {
-        "dt_v_ini": data_ini_venda.strftime('%Y-%m-%d'),
-        "dt_v_fim": data_fim_venda.strftime('%Y-%m-%d'),
-        "dt_c_ini": data_ini_compra.strftime('%Y-%m-%d'),
-        "dt_c_fim": data_fim_compra.strftime('%Y-%m-%d')
-    }
 
     if fornecedor:
-        where_clauses.append("f.NOMEFABR = :fornecedor")
-        params["fornecedor"] = fornecedor
+        fornecedor_esc = str(fornecedor).replace("'", "''")
+        where_clauses.append(f"f.NOMEFABR = '{fornecedor_esc}'")
     if depto:
-        where_clauses.append("LEFT(g.CodGrupo, 2) = :depto")
-        params["depto"] = depto
+        depto_esc = str(depto).replace("'", "''")
+        where_clauses.append(f"LEFT(g.CodGrupo, 2) = '{depto_esc}'")
     if grupo:
-        where_clauses.append("LEFT(g.CodGrupo, 5) = :grupo")
-        params["grupo"] = grupo
+        grupo_esc = str(grupo).replace("'", "''")
+        where_clauses.append(f"LEFT(g.CodGrupo, 5) = '{grupo_esc}'")
     if subgrupo:
-        where_clauses.append("g.CodGrupo = :subgrupo")
-        params["subgrupo"] = subgrupo
+        subgrupo_esc = str(subgrupo).replace("'", "''")
+        where_clauses.append(f"g.CodGrupo = '{subgrupo_esc}'")
 
     cond_prod = " AND ".join(where_clauses)
 
@@ -109,8 +110,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '1.1'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-              AND m.DtFinalizacao >= CAST(:dt_c_ini AS DATETIME)
-              AND m.DtFinalizacao < DATEADD(DAY, 1, CAST(:dt_c_fim AS DATETIME))
+              AND m.DtFinalizacao >= '{dt_c_ini_str}'
+              AND m.DtFinalizacao < DATEADD(DAY, 1, '{dt_c_fim_str}')
             GROUP BY i.IdProduto
         ),
         VendasBase AS (
@@ -126,8 +127,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '2.4' AND m.NfeStatus = 'U'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-              AND m.DtFinalizacao >= CAST(:dt_v_ini AS DATETIME)
-              AND m.DtFinalizacao < DATEADD(DAY, 1, CAST(:dt_v_fim AS DATETIME))
+              AND m.DtFinalizacao >= '{dt_v_ini_str}'
+              AND m.DtFinalizacao < DATEADD(DAY, 1, '{dt_v_fim_str}')
             GROUP BY i.IdProduto
         ),
         EstoqueBase AS (
@@ -171,7 +172,7 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
     """
     
     with engine.connect() as conn:
-        df = pd.read_sql(text(query_sql), conn, params=params)
+        df = pd.read_sql(text(query_sql), conn)
         
     if not df.empty:
         df["Venda Média/Dia"] = df["Total Vendas"] / dias_periodo

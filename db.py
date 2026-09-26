@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 
 def get_engine():
     cred = st.secrets["sql_server"]
@@ -11,7 +11,7 @@ def get_engine():
 def carregar_fabricantes():
     engine = get_engine()
     query = "SELECT DISTINCT NOMEFABR FROM Fabricantes WHERE NOMEFABR IS NOT NULL ORDER BY NOMEFABR"
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql_query(query, engine)
     return df['NOMEFABR'].tolist()
 
 @st.cache_data(ttl=3600)
@@ -23,7 +23,7 @@ def carregar_departamentos():
         WHERE LEN(REPLACE(CodGrupo, '.', '')) = 2 OR LEN(CodGrupo) = 2
         ORDER BY NomeGrupo
     """
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql_query(query, engine)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
 
 @st.cache_data(ttl=3600)
@@ -38,7 +38,7 @@ def carregar_grupos(cod_depto=None):
         depto_esc = str(cod_depto).replace("'", "''")
         query += f" AND LEFT(CodGrupo, 2) = '{depto_esc}'"
     query += " ORDER BY NomeGrupo"
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql_query(query, engine)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
 
 @st.cache_data(ttl=3600)
@@ -53,7 +53,7 @@ def carregar_subgrupos(cod_grupo=None):
         grupo_esc = str(cod_grupo).replace("'", "''")
         query += f" AND LEFT(CodGrupo, 5) = '{grupo_esc}'"
     query += " ORDER BY NomeGrupo"
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql_query(query, engine)
     return dict(zip(df['NomeGrupo'], df['Codigo']))
 
 def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, data_ini_venda, data_fim_venda, data_ini_compra, data_fim_compra):
@@ -110,8 +110,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '1.1'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-              AND m.DtFinalizacao >= '{dt_c_ini_str}'
-              AND m.DtFinalizacao < DATEADD(DAY, 1, '{dt_c_fim_str}')
+              AND m.DtFinalizacao >= CONVERT(DATETIME, '{dt_c_ini_str}', 120)
+              AND m.DtFinalizacao < DATEADD(DAY, 1, CONVERT(DATETIME, '{dt_c_fim_str}', 120))
             GROUP BY i.IdProduto
         ),
         VendasBase AS (
@@ -127,8 +127,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
             INNER JOIN ProdutosBase pb ON pb.IdProduto = i.IdProduto
             WHERE m.TipoMov = '2.4' AND m.NfeStatus = 'U'
               AND m.CodCliFor NOT IN ('C08327','F00074','C08328','F10077','C22206','F15703','C16205','F14688','C30965','F16834')
-              AND m.DtFinalizacao >= '{dt_v_ini_str}'
-              AND m.DtFinalizacao < DATEADD(DAY, 1, '{dt_v_fim_str}')
+              AND m.DtFinalizacao >= CONVERT(DATETIME, '{dt_v_ini_str}', 120)
+              AND m.DtFinalizacao < DATEADD(DAY, 1, CONVERT(DATETIME, '{dt_v_fim_str}', 120))
             GROUP BY i.IdProduto
         ),
         EstoqueBase AS (
@@ -171,8 +171,8 @@ def buscar_produtos_movimentacao_completa(fornecedor, depto, grupo, subgrupo, da
         ORDER BY pb.NOMEPRODUTO
     """
     
-    with engine.connect() as conn:
-        df = pd.read_sql(text(query_sql), conn)
+    # Executa direto via pd.read_sql_query passando o engine diretamente
+    df = pd.read_sql_query(query_sql, engine)
         
     if not df.empty:
         df["Venda Média/Dia"] = df["Total Vendas"] / dias_periodo
